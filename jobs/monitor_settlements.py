@@ -12,9 +12,9 @@ Sources wired in:
    the real case number, court, and claims administrator.
 2. Claim Depot - settlements listing page (scrape).
 3. CourtListener/RECAP API - used to *verify* a candidate's case number and
-   court actually exist once you have a case name/number to check. This is
-   NOT a discovery source; call `verify_with_courtlistener()` from the
-   Streamlit Settlement Inbox page or a follow-up job.
+   court actually exist (see components.courtlistener.verify_with_courtlistener).
+   This is NOT a discovery source; it's also callable from the Streamlit
+   Settlement Inbox page ("Verify with CourtListener" button).
 
 All scrapers are best-effort: legal-news sites restructure their HTML
 periodically. If a source stops parsing, that source simply contributes zero
@@ -31,6 +31,7 @@ from bs4 import BeautifulSoup
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "app"))
 from components.database import get_service_client  # noqa: E402
+from components.courtlistener import verify_with_courtlistener  # noqa: E402,F401
 
 USER_AGENT = "ClaimFinder/1.0 (personal household tool; contact via GitHub repo)"
 REQUEST_TIMEOUT = 20
@@ -39,8 +40,6 @@ OFFICIAL_DOMAIN_HINTS = ("settlement", "claims", ".gov", "administrator")
 
 TOP_CLASS_ACTIONS_URL = "https://topclassactions.com/category/lawsuit-settlements/open-lawsuit-settlements/"
 CLAIM_DEPOT_URL = "https://www.claimdepot.com/settlements"
-
-COURTLISTENER_BASE = "https://www.courtlistener.com/api/rest/v4"
 
 
 def _get(url):
@@ -327,49 +326,6 @@ def scrape_claim_depot():
         })
 
     return candidates
-
-
-# ---------------------------------------------------------------------------
-# CourtListener/RECAP verification helper (not a discovery source)
-# ---------------------------------------------------------------------------
-
-def verify_with_courtlistener(case_name, case_number=None):
-    """Look up a candidate case on CourtListener/RECAP to confirm it is real.
-
-    Requires COURTLISTENER_API_TOKEN. Returns a dict with court, docket
-    number, and CourtListener URL if a confident match is found, else None.
-    This is a verification aid, not an automatic verifier -- a human still
-    reviews and clicks "Mark verified" in the Settlement Inbox page.
-    """
-    token = os.environ.get("COURTLISTENER_API_TOKEN")
-    if not token:
-        print("COURTLISTENER_API_TOKEN not set -- skipping court verification.")
-        return None
-
-    params = {"q": case_number or case_name, "type": "r", "order_by": "score desc"}
-    try:
-        resp = requests.get(
-            f"{COURTLISTENER_BASE}/search/",
-            params=params,
-            headers={"Authorization": f"Token {token}", "User-Agent": USER_AGENT},
-            timeout=REQUEST_TIMEOUT,
-        )
-        resp.raise_for_status()
-        results = resp.json().get("results", [])
-    except requests.RequestException as exc:
-        print(f"WARNING: CourtListener lookup failed: {exc}")
-        return None
-
-    if not results:
-        return None
-
-    top = results[0]
-    return {
-        "court": top.get("court"),
-        "docket_number": top.get("docketNumber"),
-        "case_name_found": top.get("caseName"),
-        "courtlistener_url": f"https://www.courtlistener.com{top.get('absolute_url', '')}",
-    }
 
 
 # ---------------------------------------------------------------------------
