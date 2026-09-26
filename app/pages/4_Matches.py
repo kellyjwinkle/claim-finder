@@ -3,7 +3,7 @@ import streamlit as st
 from components.auth import require_login
 from components.database import get_user_client, log_audit_event
 from components.matching import ProfileRecord, SettlementRecord, score_match, LABEL_TO_STATUS
-from components.evidence import evidence_covers_period
+from components.evidence import evidence_matches_settlement
 from components.redaction import safe_audit_metadata
 
 st.set_page_config(page_title="Matches", layout="wide")
@@ -52,7 +52,9 @@ if st.button("Run matching now"):
                     proof_requirements=settlement.get("proof_requirements"),
                 )
                 has_evidence = any(
-                    evidence_covers_period(ev, sr.class_period_start, sr.class_period_end)
+                    evidence_matches_settlement(
+                        ev, sr.defendant, sr.class_period_start, sr.class_period_end
+                    )
                     for ev in evidence_rows
                 )
                 result = score_match(pr, sr, has_evidence, has_notice_or_account_match=False)
