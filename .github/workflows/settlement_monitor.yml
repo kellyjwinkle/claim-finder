@@ -1,1 +1,32 @@
-...
+name: Settlement Monitor
+
+on:
+  schedule:
+    - cron: "15 12 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Discover and verify settlements
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python jobs/monitor_settlements.py
+
+      - name: Send deadline alerts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DEADLINE_ALERT_WEBHOOK_URL: ${{ secrets.DEADLINE_ALERT_WEBHOOK_URL }}
+        run: python jobs/send_deadline_alerts.py
