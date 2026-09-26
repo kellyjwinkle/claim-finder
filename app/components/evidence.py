@@ -2,9 +2,12 @@
 
 Evidence documents themselves stay in Google Drive. This module only manages
 references (drive_file_id, drive_web_url) plus non-sensitive metadata used for
-matching (merchant name, date range, document type).
+matching (merchant name, date range, document type, and -- after OCR -- the
+extracted text and normalized merchant name).
 """
 from datetime import date
+
+from components.normalization import normalize_merchant_name
 
 
 def build_evidence_record(household_member_id: str, evidence_type: str, title: str,
@@ -40,3 +43,26 @@ def evidence_covers_period(evidence_row: dict, period_start: date, period_end: d
     ev_end = ev_end or date.max.isoformat()
     period_end = period_end or date.max
     return str(ev_start) <= str(period_end) and str(period_start) <= str(ev_end)
+
+
+def evidence_matches_settlement(evidence_row: dict, defendant: str,
+                                 period_start: date, period_end: date) -> bool:
+    """Stronger evidence check used by the matching engine: the evidence must
+    cover the settlement's class period AND (if a merchant is known) the
+    evidence's merchant must normalize to the same canonical name as the
+    settlement's defendant. Falls back to date-only matching if neither the
+    evidence's merchant field nor its OCR-extracted text yields a merchant."""
+    if not evidence_covers_period(evidence_row, period_start, period_end):
+        return False
+
+    if not defendant:
+        return True
+
+    defendant_canonical = normalize_merchant_name(defendant)
+    evidence_merchant = evidence_row.get("normalized_merchant") or normalize_merchant_name(
+        evidence_row.get("merchant_or_service")
+    )
+    if not evidence_merchant:
+        return True
+
+    return evidence_merchant == defendant_canonical

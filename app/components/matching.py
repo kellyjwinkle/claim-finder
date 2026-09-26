@@ -3,9 +3,15 @@
 This intentionally avoids letting an LLM decide legal eligibility. Every score
 comes from explicit, inspectable rules so you can see exactly why a settlement
 was flagged as a possible match.
+
+Phase 2 update: entity matching now uses normalized merchant names (see
+components.normalization) instead of raw substring comparison, so "AMZN Mktp"
+on a receipt correctly matches an "Amazon" settlement.
 """
 from dataclasses import dataclass, field
 from datetime import date
+
+from components.normalization import normalize_merchant_name
 
 
 @dataclass
@@ -45,6 +51,12 @@ def _date_ranges_overlap(a_start, a_end, b_start, b_end) -> bool:
 def _name_matches(profile_entity: str, defendant: str) -> bool:
     if not profile_entity or not defendant:
         return False
+    profile_canonical = normalize_merchant_name(profile_entity)
+    defendant_canonical = normalize_merchant_name(defendant)
+    if not profile_canonical or not defendant_canonical:
+        return False
+    if profile_canonical == defendant_canonical:
+        return True
     p = profile_entity.strip().lower()
     d = defendant.strip().lower()
     return p in d or d in p
