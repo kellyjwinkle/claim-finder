@@ -1,9 +1,13 @@
 """Supabase client wrapper for Claim Finder.
 
-Two clients are exposed:
-- get_user_client(): uses the anon key + the logged-in user's session (RLS applies).
-- get_service_client(): uses the service role key. Only for scheduled jobs run
-  server-side (GitHub Actions). Never import this into browser-facing Streamlit code.
+With shared-password authentication (see components.auth), there is no
+per-person Supabase Auth session driving Row Level Security anymore. The
+Streamlit app therefore uses the same service_role client as the scheduled
+GitHub Actions job. Access control for this app is enforced by the password
+gate in components.auth, not by Supabase RLS -- treat the deployed app and
+its secrets with the same care you'd give any single-shared-login household
+tool (private repo, private hosting, don't share the app URL/password
+publicly).
 """
 import os
 from functools import lru_cache
@@ -25,17 +29,17 @@ def _get(name: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def get_user_client() -> Client:
-    url = _get("SUPABASE_URL")
-    key = _get("SUPABASE_ANON_KEY")
-    return create_client(url, key)
-
-
-@lru_cache(maxsize=1)
 def get_service_client() -> Client:
     url = _get("SUPABASE_URL")
     key = _get("SUPABASE_SERVICE_ROLE_KEY")
     return create_client(url, key)
+
+
+def get_user_client() -> Client:
+    """Kept for compatibility with existing page code. Now returns the same
+    service_role client as get_service_client(), since there is no separate
+    per-user Supabase session under shared-password auth."""
+    return get_service_client()
 
 
 def log_audit_event(client: Client, actor_user_id: str, event_type: str,
