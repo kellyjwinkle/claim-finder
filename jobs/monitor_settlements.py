@@ -367,7 +367,22 @@ def upsert_settlement(client, candidate):
         client.table("settlements").update(payload).eq("id", settlement_id).execute()
     else:
         result = client.table("settlements").insert(payload).execute()
-        settlement_id = result.data[0]["id"]
+        if result.data:
+            settlement_id = result.data[0]["id"]
+        else:
+            # Some Supabase/PostgREST configurations don't return the inserted
+            # row's representation even though the insert succeeded. Re-fetch
+            # by case_name (unique in practice) instead of assuming data back.
+            refetched = client.table("settlements").select("id").eq(
+                "case_name", candidate["case_name"]
+            ).execute().data
+            if not refetched:
+                raise RuntimeError(
+                    f"Insert for '{candidate['case_name']}' returned no data and "
+                    "could not be re-fetched -- check Supabase RLS/policies on "
+                    "the settlements table."
+                )
+            settlement_id = refetched[0]["id"]
 
     client.table("settlement_sources").insert({
         "settlement_id": settlement_id,
