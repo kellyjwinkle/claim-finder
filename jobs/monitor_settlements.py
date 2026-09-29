@@ -20,6 +20,11 @@ All scrapers are best-effort: legal-news sites restructure their HTML
 periodically. If a source stops parsing, that source simply contributes zero
 candidates that run -- it never crashes the whole job and never marks
 anything verified on its own.
+
+This file also runs a startup diagnostic (diagnose_supabase_access) that
+confirms the service_role key can both read and write the settlements table
+before processing any candidates, and each candidate is now processed inside
+its own try/except so one bad row can't halt the whole run.
 """
 import os
 import re
@@ -400,17 +405,80 @@ def discover_candidate_settlements():
     return candidates
 
 
+def diagnose_supabase_access(client):
+    """Run at startup to make failures self-explanatory in the Actions log.
+    Confirms the service can actually read/write the settlements table before
+    processing any candidates, so a permissions problem shows up as a clear
+    diagnostic message instead of a confusing per-row failure later.
+    """
+    print("--- Supabase access diagnostic ---")
+    try:
+        existing_count = client.table("settlements").select(
+            "id", count="exact"
+        ).limit(1).execute()
+        print(f"SELECT on settlements: OK (table currently has "
+              f"{existing_count.count if existing_count.count is not None else 'unknown'} row(s)).")
+    except Exception as exc:
+        print(f"SELECT on settlements: FAILED -- {exc}")
+        print("This usually means the 'settlements' table does not exist yet "
+              "(migrations not run) or the API key lacks access.")
+        return False
+
+    probe_name = "__claim_finder_write_probe__"
+    try:
+        client.table("settlements").delete().eq("case_name", probe_name).execute()
+        insert_result = client.table("settlements").insert({
+            "case_name": probe_name,
+            "status": "archived",
+        }).execute()
+        if insert_result.data:
+            print("INSERT on settlements: OK (representation returned normally).")
+        else:
+            refetch = client.table("settlements").select("id").eq(
+                "case_name", probe_name
+            ).execute().data
+            if refetch:
+                print("INSERT on settlements: row was created, but Supabase did "
+                      "NOT return its representation. This points to a Row Level "
+                      "Security SELECT policy mismatch for the key being used "
+                      "(check that SUPABASE_SERVICE_ROLE_KEY is the actual "
+                      "service_role key, not the anon key, and that "
+                      "supabase/policies/rls_policies.sql ran completely).")
+            else:
+                print("INSERT on settlements: FAILED SILENTLY -- no row was "
+                      "created and none could be found afterward. Check RLS "
+                      "policies and that SUPABASE_SERVICE_ROLE_KEY is correct.")
+        client.table("settlements").delete().eq("case_name", probe_name).execute()
+    except Exception as exc:
+        print(f"INSERT on settlements: FAILED with an exception -- {exc}")
+        print("This usually means an RLS policy explicitly rejected the write, "
+              "or a required column/constraint was violated.")
+        return False
+
+    print("--- End diagnostic ---")
+    return True
+
+
 def main():
     client = get_service_client()
+    diagnose_supabase_access(client)
+
     candidates = discover_candidate_settlements()
     processed = 0
+    failed = 0
     for candidate in candidates:
         if not candidate.get("case_name"):
             continue
-        upsert_settlement(client, candidate)
-        processed += 1
-    print(f"Processed {processed} candidate settlement(s) from "
-          f"{len(candidates)} scraped record(s).")
+        try:
+            upsert_settlement(client, candidate)
+            processed += 1
+        except Exception as exc:
+            failed += 1
+            print(f"WARNING: skipped candidate '{candidate.get('case_name')}' "
+                  f"due to error: {exc}")
+
+    print(f"Processed {processed} candidate settlement(s), skipped {failed}, "
+          f"from {len(candidates)} scraped record(s).")
 
 
 if __name__ == "__main__":
